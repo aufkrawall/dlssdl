@@ -8,6 +8,8 @@ subfolder named after the version number — with the files renamed to their
 proper consumer names (`nvngx_dlss.dll`, `nvngx_dlssd.dll`, `nvngx_dlssg.dll`,
 `sl.common.dll`, …).
 
+![Screenshot](docs/screenshot.png)
+
 ## How it works
 
 NVIDIA's NGX updater (`nvidia-ngx-updater` / `NGXUpdater.exe`) fetches feature
