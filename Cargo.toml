@@ -1,0 +1,23 @@
+[package]
+name = "dlssdl"
+version = "0.1.0"
+edition = "2024"
+description = "Check NVIDIA NGX update servers for DLSS SR / RR / FG and Streamline updates and download them with proper consumer file names (egui, D3D12 renderer)"
+license = "MIT"
+repository = "https://github.com/aufkrawall/dlssdl"
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+
+[dependencies]
+anyhow = "1.0.104"
+dirs = "6.0.0"
+eframe = { version = "0.36.1", features = ["wgpu"] }
+egui = "0.36.1"
+open = "5.4.3"
+rfd = "0.17.2"
+roxmltree = "0.21.1"
+sha2 = "0.11.0"
+ureq = "2"
+zip = "8.6.0"
