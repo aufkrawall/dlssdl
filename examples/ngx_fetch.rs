@@ -13,13 +13,14 @@ fn main() -> anyhow::Result<()> {
         eprintln!("usage: ngx_fetch <dlss|dlssd|dlssg|sl> [version]");
         std::process::exit(2);
     }
-    let feature = match args[1].as_str() {
-        "dlss" => Feature::DlssSr,
-        "dlssd" => Feature::DlssRr,
-        "dlssg" => Feature::DlssFg,
-        "sl" => Feature::Streamline,
+    let dir = match args[1].as_str() {
+        "dlss" => "dlss",
+        "dlssd" => "dlssd",
+        "dlssg" => "dlssg",
+        "sl" => "sl_sdk_0",
         other => anyhow::bail!("unknown feature '{other}'"),
     };
+    let feature = Feature::from_dir(dir).unwrap();
     let want_version = args.get(2).map(|s| s.as_str());
 
     let groups = ngx::fetch_offers(&mut |m| eprintln!("… {m}"))?;

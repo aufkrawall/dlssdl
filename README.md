@@ -44,6 +44,11 @@ Notes discovered while building this tool:
   app-specific builds are still listed (tagged `[1B0]` / `[app_…]` in the UI).
   Legacy per-game DLSS 2.x snippets of the same version are collapsed into a
   single row, preferring the canonical `E658700`/`E658703` payload.
+* **Future features are picked up automatically**: any `dlss*` feature dir
+  NVIDIA adds (e.g. `dlssnr` for Neural Rendering) is listed as soon as it
+  appears — via the bucket listing, via its `nvngx_server_config.txt` pin, or
+  via version-id probing — and the consumer file name follows the
+  `nvngx_<dir>.dll` convention (e.g. `nvngx_dlssnr.dll`) with no code change.
 * **Listing limitations & deep discovery**: the listing endpoint caps at
   1000 keys and strips `continuation-token`/`prefix`/`start-after`, so a plain
   listing cannot see everything (the newest namespace `dev-models` — NVIDIA's

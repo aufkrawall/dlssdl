@@ -162,7 +162,7 @@ impl DlssApp {
                 if !r.checked {
                     continue;
                 }
-                if g.feature == Feature::Streamline {
+                if g.feature.is_streamline() {
                     best_sl = Some(best_sl.map_or(r.offer.version_id, |v| v.max(r.offer.version_id)));
                 } else {
                     best_dlss = Some(best_dlss.map_or(r.offer.version_id, |v| v.max(r.offer.version_id)));
@@ -466,10 +466,9 @@ impl eframe::App for DlssApp {
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.strong(g.feature.title());
-                            let hint = match g.feature.consumer_name() {
-                                Some(n) => n.to_string(),
-                                None => "sl.common.dll, sl.dlss.dll, sl.dlss_g.dll, sl.reflex.dll, …".into(),
-                            };
+                            let hint = g.feature.consumer_name().unwrap_or_else(|| {
+                                "sl.common.dll, sl.dlss.dll, sl.dlss_g.dll, sl.reflex.dll, …".to_string()
+                            });
                             ui.weak(format!("→ {hint}"));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let any = g.rows.iter().any(|r| r.checked);

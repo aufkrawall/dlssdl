@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
                 ngx::human_size(o.size),
                 o.candidates.len(),
                 if sidecar { "yes" } else { "no" },
-                o.feature.consumer_name().unwrap_or("<sl.*.dll from zip>")
+                o.feature.consumer_name().unwrap_or_else(|| "<sl.*.dll from zip>".to_string())
             );
         }
         println!();

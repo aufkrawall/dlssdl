@@ -31,55 +31,85 @@ const MODELS_MARKER: &str = "org/nvidia/team/ngx/models/";
 // Features
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Feature {
-    DlssSr,
-    DlssRr,
-    DlssFg,
-    Streamline,
+/// A server feature, identified by its directory under `.../ngx/models/`.
+///
+/// Deliberately dynamic: any NVIDIA `dlss*` feature that shows up on the OTA
+/// servers in the future (e.g. `dlssnr` for Neural Rendering) is picked up
+/// automatically — the consumer file name follows the existing
+/// `nvngx_<dir>.dll` convention.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Feature {
+    dir: String,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 4] = [Feature::DlssSr, Feature::DlssRr, Feature::DlssFg, Feature::Streamline];
-
+    /// Validate a server feature dir. Supported: the DLSS family (`dlss*`,
+    /// excluding the `dlss_override` zip bundles) and Streamline (`sl_sdk*`).
     pub fn from_dir(dir: &str) -> Option<Feature> {
-        match dir {
-            "dlss" => Some(Feature::DlssSr),
-            "dlssd" => Some(Feature::DlssRr),
-            "dlssg" => Some(Feature::DlssFg),
-            "sl_sdk_0" => Some(Feature::Streamline),
-            _ => None,
+        let ok = dir.starts_with("sl_sdk")
+            || (dir.starts_with("dlss") && !dir.contains("override"));
+        if ok {
+            Some(Feature { dir: dir.to_string() })
+        } else {
+            None
         }
     }
 
     /// Directory on the NGX server.
-    pub fn dir(self) -> &'static str {
-        match self {
-            Feature::DlssSr => "dlss",
-            Feature::DlssRr => "dlssd",
-            Feature::DlssFg => "dlssg",
-            Feature::Streamline => "sl_sdk_0",
-        }
+    pub fn dir(&self) -> &str {
+        &self.dir
+    }
+
+    pub fn is_streamline(&self) -> bool {
+        self.dir.starts_with("sl_sdk")
     }
 
     /// Human readable title (used in the GUI).
-    pub fn title(self) -> &'static str {
-        match self {
-            Feature::DlssSr => "DLSS Super Resolution",
-            Feature::DlssRr => "DLSS Ray Reconstruction",
-            Feature::DlssFg => "DLSS Frame Generation",
-            Feature::Streamline => "Streamline SDK",
+    pub fn title(&self) -> String {
+        match self.dir.as_str() {
+            "dlss" => "DLSS Super Resolution".into(),
+            "dlssd" => "DLSS Ray Reconstruction".into(),
+            "dlssg" => "DLSS Frame Generation".into(),
+            "sl_sdk_0" => "Streamline SDK".into(),
+            other => other.to_string(),
         }
     }
 
     /// Name the payload must get on the consumer side (`None` for zips that
     /// already contain properly named DLLs).
-    pub fn consumer_name(self) -> Option<&'static str> {
-        match self {
-            Feature::DlssSr => Some("nvngx_dlss.dll"),
-            Feature::DlssRr => Some("nvngx_dlssd.dll"),
-            Feature::DlssFg => Some("nvngx_dlssg.dll"),
-            Feature::Streamline => None,
+    pub fn consumer_name(&self) -> Option<String> {
+        if self.is_streamline() {
+            None
+        } else {
+            Some(format!("nvngx_{}.dll", self.dir))
+        }
+    }
+
+    /// The NGX app id NVIDIA currently ships one universal file for.
+    fn canonical_app_id(&self) -> &'static str {
+        if self.is_streamline() {
+            "E658703"
+        } else {
+            "E658700"
+        }
+    }
+
+    fn payload_ext(&self) -> &'static str {
+        if self.is_streamline() { "zip" } else { "bin" }
+    }
+
+    fn canonical_payload(&self) -> String {
+        format!("160_{}.{}", self.canonical_app_id(), self.payload_ext())
+    }
+
+    /// Sort order in the UI: the well-known features first, then new ones.
+    fn rank(&self) -> (u8, String) {
+        match self.dir.as_str() {
+            "dlss" => (0, String::new()),
+            "dlssd" => (1, String::new()),
+            "dlssg" => (2, String::new()),
+            "sl_sdk_0" => (3, String::new()),
+            other => (4, other.to_string()),
         }
     }
 }
@@ -121,15 +151,6 @@ pub fn decode_version(v: u32) -> String {
     format!("{}.{}.{}", v >> 16, (v >> 8) & 0xFF, v & 0xFF)
 }
 
-/// The NGX app id NVIDIA currently ships one universal file for.
-fn canonical_app_id(feature: Feature) -> &'static str {
-    if feature == Feature::Streamline {
-        "E658703"
-    } else {
-        "E658700"
-    }
-}
-
 /// Split a payload into (snippet-prefix, app-id), extension stripped:
 /// `160_E658700.bin` -> ("160", "E658700").
 fn split_payload(payload: &str) -> (&str, &str) {
@@ -141,9 +162,9 @@ fn split_payload(payload: &str) -> (&str, &str) {
     (it.next().unwrap_or(""), it.next().unwrap_or(""))
 }
 
-fn payload_rank(payload: &str, feature: Feature) -> u8 {
+fn payload_rank(payload: &str, feature: &Feature) -> u8 {
     let (prefix, app) = split_payload(payload);
-    (app.eq_ignore_ascii_case(canonical_app_id(feature)) as u8) * 2
+    (app.eq_ignore_ascii_case(feature.canonical_app_id()) as u8) * 2
         + prefix.eq_ignore_ascii_case("160") as u8
 }
 
@@ -156,7 +177,7 @@ impl Offer {
         if !prefix.eq_ignore_ascii_case("160") {
             tags.push(prefix.to_ascii_uppercase());
         }
-        if !app.eq_ignore_ascii_case(canonical_app_id(self.feature)) {
+        if !app.eq_ignore_ascii_case(self.feature.canonical_app_id()) {
             tags.push(format!("app_{}", app.to_ascii_uppercase()));
         }
         if tags.is_empty() {
@@ -226,9 +247,10 @@ fn parse_key(key: &str, size: u64) -> Option<RawEntry> {
         Some(stem) => (stem, true),
         None => (raw_name, false),
     };
-    let payload_ok = match feature {
-        Feature::Streamline => is_zip_payload(name),
-        _ => is_bin_payload(name),
+    let payload_ok = if feature.is_streamline() {
+        is_zip_payload(name)
+    } else {
+        is_bin_payload(name)
     };
     if !payload_ok {
         return None;
@@ -353,12 +375,7 @@ fn parse_server_config(text: &str) -> Vec<ConfigPin> {
             section = line[1..line.len() - 1].to_ascii_lowercase();
             continue;
         }
-        let feature = match section.as_str() {
-            "dlss" => Feature::DlssSr,
-            "dlssd" => Feature::DlssRr,
-            "dlssg" => Feature::DlssFg,
-            _ => continue,
-        };
+        let Some(feature) = Feature::from_dir(&section) else { continue };
         let Some((k, v)) = line.split_once('=') else { continue };
         let Some(app) = k.trim().strip_prefix("app_") else { continue };
         out.push(ConfigPin {
@@ -381,9 +398,8 @@ fn pack_semver(s: &str) -> Option<u32> {
 
 /// HEAD a payload (+ its sha256 sidecar, if present) and return synthetic
 /// listing entries when the object exists.
-fn probe_entries(agent: &ureq::Agent, ns: &str, feature: Feature, version_id: u32) -> Vec<RawEntry> {
-    let ext = if feature == Feature::Streamline { "zip" } else { "bin" };
-    let payload = format!("160_{}.{ext}", canonical_app_id(feature));
+fn probe_entries(agent: &ureq::Agent, ns: &str, feature: &Feature, version_id: u32) -> Vec<RawEntry> {
+    let payload = feature.canonical_payload();
     let base = format!(
         "{NGX_HOST}/{ns}/{MODELS_MARKER}{}/versions/{version_id}/files/{payload}",
         feature.dir()
@@ -391,7 +407,7 @@ fn probe_entries(agent: &ureq::Agent, ns: &str, feature: Feature, version_id: u3
     let Some(size) = head_size(agent, &base) else { return Vec::new() };
     let mut out = vec![RawEntry {
         ns: ns.to_string(),
-        feature,
+        feature: feature.clone(),
         version_id,
         payload: payload.clone(),
         is_sidecar: false,
@@ -400,7 +416,7 @@ fn probe_entries(agent: &ureq::Agent, ns: &str, feature: Feature, version_id: u3
     if head_size(agent, &format!("{base}.sha256")).is_some() {
         out.push(RawEntry {
             ns: ns.to_string(),
-            feature,
+            feature: feature.clone(),
             version_id,
             payload,
             is_sidecar: true,
@@ -475,15 +491,15 @@ pub fn fetch_offers(log: &mut dyn FnMut(String)) -> Result<Vec<Group>> {
     let mut known: BTreeMap<(Feature, u32), ()> = raw
         .iter()
         .filter(|e| !e.is_sidecar)
-        .map(|e| ((e.feature, e.version_id), ()))
+        .map(|e| ((e.feature.clone(), e.version_id), ()))
         .collect();
     for ns in &namespaces {
         for pin in fetch_server_config_pins(&agent, ns, log) {
-            if pin.app_id != canonical_app_id(pin.feature) {
+            if pin.app_id != pin.feature.canonical_app_id() {
                 continue;
             }
             let Some(id) = pack_semver(&pin.version) else { continue };
-            let found = probe_entries(&agent, ns, pin.feature, id);
+            let found = probe_entries(&agent, ns, &pin.feature, id);
             if !found.is_empty() {
                 log(format!(
                     "config pin verified: {} {} on {}",
@@ -493,7 +509,7 @@ pub fn fetch_offers(log: &mut dyn FnMut(String)) -> Result<Vec<Group>> {
                 ));
             }
             for e in found {
-                known.insert((e.feature, e.version_id), ());
+                known.insert((e.feature.clone(), e.version_id), ());
                 raw.push(e);
             }
         }
@@ -501,10 +517,17 @@ pub fn fetch_offers(log: &mut dyn FnMut(String)) -> Result<Vec<Group>> {
 
     // ---- deep discovery pass 2: HEAD probes for staged builds ------------
     let probe_agent = build_probe_agent();
-    for feature in Feature::ALL {
+    let mut features: Vec<Feature> = Vec::new();
+    for e in &raw {
+        if !features.iter().any(|f| f.dir == e.feature.dir) {
+            features.push(e.feature.clone());
+        }
+    }
+    features.sort_by_key(|f| f.rank());
+    for feature in &features {
         let Some(max_id) = raw
             .iter()
-            .filter(|e| e.feature == feature)
+            .filter(|e| e.feature.dir == feature.dir)
             .map(|e| e.version_id)
             .max()
         else {
@@ -515,7 +538,7 @@ pub fn fetch_offers(log: &mut dyn FnMut(String)) -> Result<Vec<Group>> {
         for minor in minor + 1..=(minor + 3).min(0xFF) {
             for build in [0u32, 128] {
                 let id = (major << 16) | (minor << 8) | build;
-                if known.contains_key(&(feature, id)) {
+                if known.contains_key(&(feature.clone(), id)) {
                     continue;
                 }
                 for ns in &namespaces {
@@ -528,7 +551,7 @@ pub fn fetch_offers(log: &mut dyn FnMut(String)) -> Result<Vec<Group>> {
                             ns
                         ));
                         for e in found {
-                            known.insert((e.feature, e.version_id), ());
+                            known.insert((e.feature.clone(), e.version_id), ());
                             raw.push(e);
                         }
                     }
@@ -549,10 +572,7 @@ pub fn fetch_offers(log: &mut dyn FnMut(String)) -> Result<Vec<Group>> {
         slot.1 |= e.is_sidecar;
     }
 
-    let mut groups: Vec<Group> = Feature::ALL
-        .iter()
-        .map(|f| Group { feature: *f, offers: Vec::new() })
-        .collect();
+    let mut per_feature: BTreeMap<Feature, Vec<Offer>> = BTreeMap::new();
     for ((feature, version_id, payload), per_ns) in acc {
         // prefer mirrors that publish a sha256 sidecar, then alphabetical
         let mut items: Vec<(String, u64, bool)> = per_ns
@@ -582,42 +602,40 @@ pub fn fetch_offers(log: &mut dyn FnMut(String)) -> Result<Vec<Group>> {
             .collect();
 
         let offer = Offer {
-            feature,
+            feature: feature.clone(),
             version_id,
             version: decode_version(version_id),
             payload,
             size,
             candidates,
         };
-        groups
-            .iter_mut()
-            .find(|g| g.feature == feature)
-            .unwrap()
-            .offers
-            .push(offer);
+        per_feature.entry(feature).or_default().push(offer);
     }
-    for g in &mut groups {
+    let mut groups: Vec<Group> = Vec::new();
+    for (feature, offers) in per_feature {
         // Collapse legacy per-app-id duplicates of the same version: prefer the
         // canonical universal payload (E658700/E658703 on prefix 160), but keep
         // non-canonical ones if no canonical variant exists (future-proofing).
         let mut best: BTreeMap<u32, Offer> = BTreeMap::new();
-        for offer in std::mem::take(&mut g.offers) {
+        for offer in offers {
             match best.entry(offer.version_id) {
                 std::collections::btree_map::Entry::Vacant(v) => {
                     v.insert(offer);
                 }
                 std::collections::btree_map::Entry::Occupied(mut o) => {
-                    if payload_rank(&offer.payload, g.feature)
-                        > payload_rank(&o.get().payload, g.feature)
+                    if payload_rank(&offer.payload, &feature)
+                        > payload_rank(&o.get().payload, &feature)
                     {
                         o.insert(offer);
                     }
                 }
             }
         }
-        g.offers = best.into_values().collect();
-        g.offers.sort_by(|a, b| b.version_id.cmp(&a.version_id));
+        let mut offers: Vec<Offer> = best.into_values().collect();
+        offers.sort_by(|a, b| b.version_id.cmp(&a.version_id));
+        groups.push(Group { feature, offers });
     }
+    groups.sort_by(|a, b| a.feature.rank().cmp(&b.feature.rank()));
     groups.retain(|g| !g.offers.is_empty());
     Ok(groups)
 }
@@ -746,9 +764,9 @@ pub fn download_offer(
 fn finalize(offer: &Offer, part: &Path, out_dir: &Path, log: &mut dyn FnMut(String)) -> Result<Vec<String>> {
     match offer.feature.consumer_name() {
         Some(dest_name) => {
-            let dest = out_dir.join(dest_name);
+            let dest = out_dir.join(&dest_name);
             std::fs::rename(part, &dest).with_context(|| format!("renaming to {dest_name}"))?;
-            Ok(vec![dest_name.to_string()])
+            Ok(vec![dest_name])
         }
         None => {
             // Streamline: zip archive with sl.*.dll members (already consumer names).
@@ -824,7 +842,7 @@ mod tests {
             59922544,
         )
         .unwrap();
-        assert_eq!(e.feature, Feature::DlssRr);
+        assert_eq!(e.feature, Feature::from_dir("dlssd").unwrap());
         assert_eq!(e.version_id, 20317442);
         assert_eq!(e.payload, "160_E658700.bin");
         assert!(!e.is_sidecar);
@@ -860,7 +878,7 @@ mod tests {
             65,
         )
         .unwrap();
-        assert_eq!(s.feature, Feature::Streamline);
+        assert_eq!(s.feature, Feature::from_dir("sl_sdk_0").unwrap());
         assert!(s.is_sidecar);
 
         assert!(parse_key(
@@ -884,9 +902,25 @@ mod tests {
         let e658700: Vec<_> = pins.iter().filter(|p| p.app_id == "E658700").collect();
         assert_eq!(e658700.len(), 3);
         assert!(e658700.iter().all(|p| p.version == "310.9.0"));
-        assert!(pins.iter().any(|p| p.feature == Feature::DlssRr));
-        assert!(pins.iter().any(|p| p.feature == Feature::DlssFg));
-        assert!(pins.iter().any(|p| p.feature == Feature::DlssSr));
+        assert!(pins.iter().any(|p| p.feature.dir == "dlssd"));
+        assert!(pins.iter().any(|p| p.feature.dir == "dlssg"));
+        assert!(pins.iter().any(|p| p.feature.dir == "dlss"));
+    }
+
+    #[test]
+    fn feature_dir_generalization() {
+        // Any future DLSS-family feature dir is accepted, and the consumer
+        // name follows the nvngx_<dir>.dll convention automatically.
+        let nr = Feature::from_dir("dlssnr").unwrap();
+        assert_eq!(nr.consumer_name().as_deref(), Some("nvngx_dlssnr.dll"));
+        assert_eq!(nr.canonical_payload(), "160_E658700.bin");
+        assert_eq!(nr.title(), "dlssnr");
+        assert_eq!(Feature::from_dir("dlss").unwrap().title(), "DLSS Super Resolution");
+        // Non-feature dirs stay rejected.
+        assert!(Feature::from_dir("dlss_override").is_none());
+        assert!(Feature::from_dir("dlisp").is_none());
+        assert!(Feature::from_dir("nvbcast").is_none());
+        assert_eq!(Feature::from_dir("sl_sdk_0").unwrap().consumer_name(), None);
     }
 
     #[test]
